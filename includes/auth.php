@@ -1,17 +1,26 @@
 <?php
-session_start();
+// Start session if not started
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 function requireLogin() {
     if (!isset($_SESSION['user'])) {
-        header("Location: index.php");
+        // Simple redirect
+        echo '<script>window.location.href = "../index.php";</script>';
         exit;
     }
 }
 
 function requireRole($role) {
-    requireLogin();
+    if (!isset($_SESSION['user'])) {
+        echo '<script>window.location.href = "../index.php";</script>';
+        exit;
+    }
+    
     if ($_SESSION['user']['role'] !== $role) {
-        header("Location: index.php");
+        echo '<script>window.location.href = "../index.php";</script>';
         exit;
     }
 }
+?>

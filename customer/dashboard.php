@@ -14,20 +14,26 @@ $stats_query = $conn->prepare(
         SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as upcoming_trips,
         SUM(total_amount) as total_spent
      FROM bookings 
-     WHERE user_id = ?"
+     WHERE customer_id = ?"
 );
+
 $stats_query->bind_param("i", $user_id);
 $stats_query->execute();
 $stats = $stats_query->get_result()->fetch_assoc();
 
 // Get upcoming trips
 $upcoming_query = $conn->prepare(
-    "SELECT b.*, h.name as hotel_name, h.location, h.image
+    "SELECT b.*, 
+            h.name as hotel_name, 
+            h.image,
+            d.name as destination_name,
+            d.image as destination_image
      FROM bookings b
      JOIN hotels h ON b.hotel_id = h.id
-     WHERE b.user_id = ? AND b.status = 'confirmed' 
-     AND b.check_in_date >= CURDATE()
-     ORDER BY b.check_in_date ASC
+     JOIN destinations d ON h.destination_id = d.id
+     WHERE b.customer_id = ? AND b.status = 'confirmed' 
+     AND b.check_in >= CURDATE()
+     ORDER BY b.check_in ASC
      LIMIT 3"
 );
 $upcoming_query->bind_param("i", $user_id);

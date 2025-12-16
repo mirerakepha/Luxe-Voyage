@@ -1,7 +1,18 @@
 <?php
+// NO WHITESPACE BEFORE THIS LINE!
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// Start output buffering
+ob_start();
+
 include "../includes/auth.php";
 include "../config/db.php";
 requireRole('admin');
+
+// Debug: Check session
+// echo "<!-- DEBUG: Session user role: " . $_SESSION['user']['role'] . " -->\n";
+// echo "<!-- DEBUG: Session username: " . $_SESSION['user']['username'] . " -->\n";
 
 $admin_name = $_SESSION['user']['username'];
 $admin_email = $_SESSION['user']['email'];
@@ -13,13 +24,17 @@ $users = $conn->query("SELECT COUNT(*) AS total FROM users")->fetch_assoc();
 $hotels = $conn->query("SELECT COUNT(*) AS total FROM hotels")->fetch_assoc();
 $bookings = $conn->query("SELECT COUNT(*) AS total FROM bookings")->fetch_assoc();
 
-// Get recent bookings
+// Get recent bookings - FIXED: Don't use b.*
 $recent_bookings = $conn->query(
-    "SELECT b.*, u.username, h.name as hotel_name
+    "SELECT b.id, b.customer_id, b.hotel_id, b.check_in, b.check_out, b.status, b.total_amount, b.created_at,
+            u.username, u.email as customer_email, 
+            h.name as hotel_name, 
+            d.name as destination_name
      FROM bookings b
-     JOIN users u ON b.user_id = u.id
+     JOIN users u ON b.customer_id = u.id
      JOIN hotels h ON b.hotel_id = h.id
-     ORDER BY b.booking_date DESC
+     JOIN destinations d ON h.destination_id = d.id
+     ORDER BY b.created_at DESC
      LIMIT 5"
 );
 
@@ -32,9 +47,9 @@ $recent_users = $conn->query(
 
 // Get today's bookings
 $today_bookings = $conn->query(
-    "SELECT COUNT(*) as total, SUM(total_amount) as revenue 
+    "SELECT COUNT(*) as total, COALESCE(SUM(total_amount), 0) as revenue 
      FROM bookings 
-     WHERE DATE(booking_date) = CURDATE()"
+     WHERE DATE(created_at) = CURDATE()"
 )->fetch_assoc();
 
 // Get pending bookings
@@ -56,19 +71,24 @@ $month_growth = $conn->query(
 $booking_growth = $conn->query(
     "SELECT COUNT(*) as growth 
      FROM bookings 
-     WHERE MONTH(booking_date) = MONTH(CURDATE()) 
-     AND YEAR(booking_date) = YEAR(CURDATE())"
+     WHERE MONTH(created_at) = MONTH(CURDATE()) 
+     AND YEAR(created_at) = YEAR(CURDATE())"
 )->fetch_assoc();
 
 // Get revenue this month
 $month_revenue = $conn->query(
-    "SELECT SUM(total_amount) as revenue 
+    "SELECT COALESCE(SUM(total_amount), 0) as revenue 
      FROM bookings 
-     WHERE MONTH(booking_date) = MONTH(CURDATE()) 
-     AND YEAR(booking_date) = YEAR(CURDATE())
+     WHERE MONTH(created_at) = MONTH(CURDATE()) 
+     AND YEAR(created_at) = YEAR(CURDATE())
      AND status = 'confirmed'"
 )->fetch_assoc();
+
+// Clean output buffer
+ob_end_clean();
 ?>
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>

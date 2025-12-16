@@ -11,15 +11,21 @@ $status = $_GET['status'] ?? '';
 $search = $_GET['search'] ?? '';
 $hotel_id = $_GET['hotel'] ?? '';
 
-// Build query with filters
-$query = "SELECT b.*, h.name AS hotel_name, h.location, h.image as hotel_image, 
-                 u.username AS customer_name, u.email AS customer_email,
-                 DATE(b.check_in_date) as check_in, DATE(b.check_out_date) as check_out
+// Build query with filters - FIXED VERSION
+$query = "SELECT 
+            b.id, b.customer_id, b.hotel_id, b.check_in, b.check_out, 
+            b.status, b.created_at, b.total_amount,
+            h.name AS hotel_name, h.image as hotel_image, h.location,
+            u.username AS customer_name, u.email AS customer_email,
+            DATE(b.check_in) as check_in_date, DATE(b.check_out) as check_out_date,
+            d.name as destination_name
           FROM bookings b
           JOIN hotels h ON b.hotel_id = h.id
           JOIN users u ON b.customer_id = u.id
+          JOIN destinations d ON h.destination_id = d.id
           WHERE h.host_id = ?";
 
+          
 $params = [$hostId];
 $types = "i";
 
@@ -37,15 +43,24 @@ if (!empty($hotel_id)) {
 }
 
 if (!empty($search)) {
-    $query .= " AND (h.name LIKE ? OR u.username LIKE ? OR u.email LIKE ?)";
+    $query .= " AND (h.name LIKE ? OR u.username LIKE ? OR u.email LIKE ? OR d.name LIKE ?)";
     $search_term = "%$search%";
     $params[] = $search_term;
     $params[] = $search_term;
     $params[] = $search_term;
-    $types .= "sss";
+    $params[] = $search_term;
+    $types .= "ssss";
 }
 
-$query .= " ORDER BY b.booking_date DESC";
+// Use created_at instead of booking_date, or if you added booking_date column
+if (isset($_GET['date']) && $_GET['date'] !== '') {
+    $query .= " AND DATE(b.created_at) = ?";
+    $params[] = $_GET['date'];
+    $types .= "s";
+}
+
+// Order by check_in date (newest first) or created_at
+$query .= " ORDER BY b.check_in DESC";
 
 // Get bookings
 $stmt = $conn->prepare($query);
@@ -59,9 +74,7 @@ $stats_query = $conn->prepare(
         COUNT(*) as total,
         SUM(CASE WHEN b.status = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
         SUM(CASE WHEN b.status = 'pending' THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN b.status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
-        SUM(CASE WHEN b.status = 'completed' THEN 1 ELSE 0 END) as completed,
-        SUM(b.total_amount) as revenue
+        COALESCE(SUM(b.total_amount), 0) as revenue
      FROM bookings b
      JOIN hotels h ON b.hotel_id = h.id
      WHERE h.host_id = ?"

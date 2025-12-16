@@ -3,7 +3,7 @@ session_start();
 include "../config/db.php";
 include "../includes/auth.php";
 
-// Check if user is admin
+// Simple admin check
 if (!isset($_SESSION['user']) || $_SESSION['user']['role'] !== 'admin') {
     header("Location: ../login.php");
     exit;
@@ -15,26 +15,28 @@ $admin_initials = strtoupper(substr($admin_name, 0, 2));
 $success_message = '';
 $error_message = '';
 
-// Create uploads directory if it doesn't exist
+// Create uploads directory
 $upload_dir = "../uploads/destinations/";
 if (!file_exists($upload_dir)) {
     mkdir($upload_dir, 0777, true);
 }
 
-if (isset($_POST['add'])) {
-    $name = trim($_POST['name']);
-    $desc = trim($_POST['description']);
+// FORM PROCESSING
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add'])) {
+    // Get form data
+    $name = trim($_POST['name'] ?? '');
+    $desc = trim($_POST['description'] ?? '');
     $country = trim($_POST['country'] ?? '');
     $best_season = trim($_POST['best_season'] ?? '');
     $popular_attractions = trim($_POST['popular_attractions'] ?? '');
-
-    // Validate inputs
-    if (empty($name) || empty($desc)) {
+    
+    // Validate
+    if (empty($name) || empty($desc) || empty($country)) {
         $error_message = "Please fill in all required fields.";
     } else {
-        // Handle image upload
-        $img = '';
-        if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
+        // Check if file was uploaded
+        if (isset($_FILES['image']) && $_FILES['image']['error'] === 0) {
+            // Validate file type and size
             $allowed_types = ['image/jpeg', 'image/png', 'image/jpg', 'image/gif', 'image/webp'];
             $max_size = 5 * 1024 * 1024; // 5MB
             
@@ -43,49 +45,51 @@ if (isset($_POST['add'])) {
             } elseif ($_FILES['image']['size'] > $max_size) {
                 $error_message = "Image size must be less than 5MB.";
             } else {
+                // Generate unique filename
                 $ext = pathinfo($_FILES['image']['name'], PATHINFO_EXTENSION);
                 $img = uniqid() . '_' . time() . '.' . $ext;
                 $upload_path = $upload_dir . $img;
                 
-                if (!move_uploaded_file($_FILES['image']['tmp_name'], $upload_path)) {
-                    $error_message = "Failed to upload image.";
+                // Move uploaded file
+                if (move_uploaded_file($_FILES['image']['tmp_name'], $upload_path)) {
+                    // Insert into database
+                    $stmt = $conn->prepare(
+                        "INSERT INTO destinations (name, description, image, country, best_season, popular_attractions)
+                         VALUES (?, ?, ?, ?, ?, ?)"
+                    );
+                    $stmt->bind_param("ssssss", $name, $desc, $img, $country, $best_season, $popular_attractions);
+                    
+                    if ($stmt->execute()) {
+                        $success_message = "Destination added successfully!";
+                        // Clear form on success
+                        $_POST = array();
+                        $_FILES = array();
+                    } else {
+                        $error_message = "Database error: " . $stmt->error;
+                    }
+                    $stmt->close();
+                } else {
+                    $error_message = "Failed to upload image. Please check directory permissions.";
                 }
             }
         } else {
-            $error_message = "Please select an image for the destination.";
-        }
-        
-        if (empty($error_message)) {
-            $stmt = $conn->prepare(
-                "INSERT INTO destinations (name, description, image, country, best_season, popular_attractions)
-                 VALUES (?, ?, ?, ?, ?, ?)"
-            );
-            $stmt->bind_param("ssssss", $name, $desc, $img, $country, $best_season, $popular_attractions);
-            
-            if ($stmt->execute()) {
-                $success_message = "Destination added successfully!";
-                // Clear form fields
-                $_POST = array();
-                $_FILES = array();
-            } else {
-                $error_message = "Failed to add destination: " . $conn->error;
-            }
-            $stmt->close();
+            $error_message = "Please select an image.";
         }
     }
 }
 
-// Get destination stats for preview
+// Get stats for preview
 $stats_query = $conn->query("
     SELECT 
         COUNT(*) as total_destinations,
-        COUNT(DISTINCT country) as countries_covered,
+        (SELECT COUNT(DISTINCT IFNULL(country, 'Unknown')) FROM destinations) as countries_covered,
         (SELECT COUNT(*) FROM hotels) as total_hotels,
         (SELECT COUNT(*) FROM bookings WHERE DATE(created_at) = CURDATE()) as today_bookings
     FROM destinations
 ");
 $stats = $stats_query->fetch_assoc();
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -96,36 +100,217 @@ $stats = $stats_query->fetch_assoc();
     <link rel="stylesheet" href="../assets/css/add_destination.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        /* Additional inline styles */
         body { font-family: 'Poppins', sans-serif; margin: 0; }
         .container { max-width: 1200px; margin: 0 auto; padding: 0 1rem; }
+        
+        /* Form styling */
+        .form-control {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: all 0.3s;
+            background: #fff;
+        }
+        
+        .form-control:focus {
+            outline: none;
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
+        
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: #2d3748;
+        }
+        
+        .required {
+            color: #e53e3e;
+        }
+        
+        .submit-btn {
+            background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+            color: white;
+            padding: 14px 32px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .submit-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(79, 70, 229, 0.2);
+        }
+        
+        .cancel-btn {
+            background: #fff;
+            color: #4a5568;
+            padding: 14px 32px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: 1rem;
+        }
+        
+        .cancel-btn:hover {
+            background: #f7fafc;
+            border-color: #cbd5e0;
+        }
+        
+        .success-state {
+            background: #f0fdf4;
+            border: 2px solid #86efac;
+            border-radius: 12px;
+            padding: 3rem;
+            text-align: center;
+            margin: 2rem 0;
+        }
+        
+        .success-icon {
+            width: 80px;
+            height: 80px;
+            background: #86efac;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 1.5rem;
+            font-size: 2rem;
+            color: #166534;
+        }
+        
+        .error-message {
+            background: #fef2f2;
+            border: 2px solid #fca5a5;
+            border-radius: 10px;
+            padding: 1rem;
+            margin: 1rem 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: #991b1b;
+        }
+        
+        .file-upload-container {
+            border: 3px dashed #e2e8f0;
+            border-radius: 12px;
+            padding: 3rem;
+            text-align: center;
+            transition: all 0.3s;
+            background: #f8fafc;
+            cursor: pointer;
+        }
+        
+        .file-upload-container:hover {
+            border-color: #4f46e5;
+            background: #f1f5f9;
+        }
+        
+        .file-input {
+            display: none;
+        }
+        
+        .form-tips {
+            background: #f0f9ff;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+        
+        .stats-preview {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 2rem;
+        }
+        
+        .stat-preview {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            border: 1px solid #e2e8f0;
+        }
+        
+        .admin-header {
+            background: white;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            padding: 1rem 0;
+            margin-bottom: 2rem;
+        }
+        
+        .header-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .admin-avatar {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+        
+        .form-actions {
+            margin-top: 2rem;
+            display: flex;
+            gap: 1rem;
+        }
     </style>
 </head>
 <body>
     <div class="admin-destination-page">
         <!-- Header -->
-        <header class="destination-header">
+        <header class="admin-header">
             <div class="container">
                 <div class="header-container">
-                    <div class="header-left">
-                        <h1><i class="fas fa-globe-americas"></i> Admin Dashboard</h1>
-                        
-                        <div class="admin-info">
+                    <div style="display: flex; align-items: center; gap: 1rem;">
+                        <h1 style="margin: 0; font-size: 1.5rem;">
+                            <i class="fas fa-globe-americas" style="color: #4f46e5;"></i> Luxe Voyage Admin
+                        </h1>
+                        <div style="display: flex; align-items: center; gap: 12px;">
                             <div class="admin-avatar">
                                 <?php echo $admin_initials; ?>
                             </div>
-                            <div class="admin-details">
-                                <span class="admin-name"><?php echo htmlspecialchars($admin_name); ?></span>
-                                <span class="admin-role">Administrator</span>
+                            <div>
+                                <div style="font-weight: 600;"><?php echo htmlspecialchars($admin_name); ?></div>
+                                <div style="font-size: 0.875rem; color: #718096;">Administrator</div>
                             </div>
                         </div>
                     </div>
                     
-                    <div class="header-actions">
-                        <a href="dashboard.php" class="admin-btn secondary">
+                    <div style="display: flex; gap: 1rem;">
+                        <a href="dashboard.php" style="padding: 10px 20px; background: #f1f5f9; border-radius: 8px; text-decoration: none; color: #4a5568; display: flex; align-items: center; gap: 8px;">
                             <i class="fas fa-tachometer-alt"></i> Dashboard
                         </a>
-                        <a href="../logout.php" class="admin-btn secondary">
+                        <a href="../logout.php" style="padding: 10px 20px; background: #fef2f2; border-radius: 8px; text-decoration: none; color: #dc2626; display: flex; align-items: center; gap: 8px;">
                             <i class="fas fa-sign-out-alt"></i> Logout
                         </a>
                     </div>
@@ -136,62 +321,72 @@ $stats = $stats_query->fetch_assoc();
         <!-- Main Content -->
         <div class="container">
             <!-- Breadcrumb -->
-            <div class="breadcrumb">
-                <a href="dashboard.php"><i class="fas fa-home"></i> Dashboard</a>
-                <i class="fas fa-chevron-right"></i>
-                <span>Add Destination</span>
+            <div style="margin-bottom: 2rem;">
+                <a href="dashboard.php" style="color: #4f46e5; text-decoration: none;">
+                    <i class="fas fa-home"></i> Dashboard
+                </a>
+                <span style="margin: 0 8px; color: #cbd5e0;">
+                    <i class="fas fa-chevron-right"></i>
+                </span>
+                <span style="color: #4a5568; font-weight: 500;">Add Destination</span>
             </div>
             
-            <div class="destination-container">
-                <div class="destination-card">
-                    <?php if ($success_message): ?>
-                        <!-- Success State -->
-                        <div class="success-state">
-                            <div class="success-icon">
-                                <i class="fas fa-check"></i>
-                            </div>
-                            <h3>Destination Added Successfully!</h3>
-                            <p>The destination has been added to the system and is now available for hotel listings and bookings.</p>
-                            
-                            <div class="success-actions">
-                                <a href="add_destination.php" class="submit-btn">
-                                    <i class="fas fa-plus"></i> Add Another Destination
-                                </a>
-                                <a href="dashboard.php" class="cancel-btn">
-                                    <i class="fas fa-arrow-left"></i> Back to Dashboard
-                                </a>
-                            </div>
+            <div style="background: white; border-radius: 16px; padding: 2rem; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);">
+                <?php if ($success_message): ?>
+                    <!-- Success State -->
+                    <div class="success-state">
+                        <div class="success-icon">
+                            <i class="fas fa-check"></i>
                         </div>
+                        <h2 style="margin: 0 0 1rem; color: #166534;">Destination Added Successfully!</h2>
+                        <p style="color: #4a5568; max-width: 500px; margin: 0 auto 2rem;">
+                            The destination has been added to the system and is now available for hotel listings and bookings.
+                        </p>
+                        
+                        <div style="display: flex; gap: 1rem; justify-content: center;">
+                            <a href="add_destination.php" class="submit-btn">
+                                <i class="fas fa-plus"></i> Add Another Destination
+                            </a>
+                            <a href="dashboard.php" class="cancel-btn">
+                                <i class="fas fa-arrow-left"></i> Back to Dashboard
+                            </a>
+                        </div>
+                    </div>
+                
+                <?php else: ?>
+                    <!-- Form Header -->
+                    <div style="margin-bottom: 2rem;">
+                        <h2 style="margin: 0 0 0.5rem; display: flex; align-items: center; gap: 12px; color: #2d3748;">
+                            <i class="fas fa-map-marker-alt" style="color: #4f46e5;"></i> Add New Destination
+                        </h2>
+                        <p style="color: #718096; margin: 0;">
+                            Add a new travel destination to the Luxe Voyage platform
+                        </p>
+                    </div>
                     
-                    <?php else: ?>
-                        <!-- Form Header -->
-                        <div class="form-header">
-                            <h2><i class="fas fa-map-marker-alt"></i> Add New Destination</h2>
-                            <p>Add a new travel destination to the Luxe Voyage platform</p>
+                    <?php if ($error_message): ?>
+                        <div class="error-message">
+                            <i class="fas fa-exclamation-circle"></i>
+                            <div>
+                                <strong>Error!</strong> <?php echo htmlspecialchars($error_message); ?>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+                    
+                    <form method="POST" enctype="multipart/form-data" id="addDestinationForm">
+                        <!-- Basic Information -->
+                        <div class="form-group">
+                            <label for="name">Destination Name <span class="required">*</span></label>
+                            <input type="text" id="name" name="name" class="form-control" 
+                                   value="<?php echo htmlspecialchars($_POST['name'] ?? ''); ?>"
+                                   placeholder="Enter destination name (e.g., Paris, Maldives, Tokyo)" required>
                         </div>
                         
-                        <?php if ($error_message): ?>
-                            <div class="message error-message">
-                                <i class="fas fa-exclamation-circle"></i>
-                                <div>
-                                    <strong>Error!</strong> <?php echo $error_message; ?>
-                                </div>
-                            </div>
-                        <?php endif; ?>
-                        
-                        <form method="POST" enctype="multipart/form-data" id="addDestinationForm" class="form-grid">
-                            <!-- Basic Information -->
-                            <div class="form-group form-full-width">
-                                <label for="name">Destination Name <span class="required">*</span></label>
-                                <input type="text" id="name" name="name" class="form-control" 
-                                       value="<?php echo isset($_POST['name']) ? htmlspecialchars($_POST['name']) : ''; ?>"
-                                       placeholder="Enter destination name (e.g., Paris, Maldives, Tokyo)" required>
-                            </div>
-                            
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
                             <div class="form-group">
                                 <label for="country">Country <span class="required">*</span></label>
                                 <input type="text" id="country" name="country" class="form-control"
-                                       value="<?php echo isset($_POST['country']) ? htmlspecialchars($_POST['country']) : ''; ?>"
+                                       value="<?php echo htmlspecialchars($_POST['country'] ?? ''); ?>"
                                        placeholder="Country name" required>
                             </div>
                             
@@ -199,116 +394,117 @@ $stats = $stats_query->fetch_assoc();
                                 <label for="best_season">Best Season to Visit</label>
                                 <select id="best_season" name="best_season" class="form-control">
                                     <option value="">Select Season</option>
-                                    <option value="Spring" <?php echo (isset($_POST['best_season']) && $_POST['best_season'] === 'Spring') ? 'selected' : ''; ?>>Spring</option>
-                                    <option value="Summer" <?php echo (isset($_POST['best_season']) && $_POST['best_season'] === 'Summer') ? 'selected' : ''; ?>>Summer</option>
-                                    <option value="Fall/Autumn" <?php echo (isset($_POST['best_season']) && $_POST['best_season'] === 'Fall/Autumn') ? 'selected' : ''; ?>>Fall/Autumn</option>
-                                    <option value="Winter" <?php echo (isset($_POST['best_season']) && $_POST['best_season'] === 'Winter') ? 'selected' : ''; ?>>Winter</option>
-                                    <option value="Year-round" <?php echo (isset($_POST['best_season']) && $_POST['best_season'] === 'Year-round') ? 'selected' : ''; ?>>Year-round</option>
+                                    <option value="Spring" <?php echo ($_POST['best_season'] ?? '') === 'Spring' ? 'selected' : ''; ?>>Spring</option>
+                                    <option value="Summer" <?php echo ($_POST['best_season'] ?? '') === 'Summer' ? 'selected' : ''; ?>>Summer</option>
+                                    <option value="Fall/Autumn" <?php echo ($_POST['best_season'] ?? '') === 'Fall/Autumn' ? 'selected' : ''; ?>>Fall/Autumn</option>
+                                    <option value="Winter" <?php echo ($_POST['best_season'] ?? '') === 'Winter' ? 'selected' : ''; ?>>Winter</option>
+                                    <option value="Year-round" <?php echo ($_POST['best_season'] ?? '') === 'Year-round' ? 'selected' : ''; ?>>Year-round</option>
                                 </select>
                             </div>
-                            
-                            <!-- Description -->
-                            <div class="form-group form-full-width">
-                                <label for="description">Destination Description <span class="required">*</span></label>
-                                <textarea id="description" name="description" class="form-control" 
-                                          placeholder="Describe the destination, its attractions, culture, and unique features..."
-                                          rows="4" required><?php echo isset($_POST['description']) ? htmlspecialchars($_POST['description']) : ''; ?></textarea>
-                            </div>
-                            
-                            <!-- Popular Attractions -->
-                            <div class="form-group form-full-width">
-                                <label for="popular_attractions">Popular Attractions</label>
-                                <textarea id="popular_attractions" name="popular_attractions" class="form-control" 
-                                          placeholder="List popular attractions, separated by commas (e.g., Eiffel Tower, Louvre Museum, Champs-Élysées)"
-                                          rows="3"><?php echo isset($_POST['popular_attractions']) ? htmlspecialchars($_POST['popular_attractions']) : ''; ?></textarea>
-                                <small style="color: #a0aec0; display: block; margin-top: 0.5rem;">
-                                    <i class="fas fa-info-circle"></i> Separate attractions with commas
-                                </small>
-                            </div>
-                            
-                            <!-- Image Upload -->
-                            <div class="form-group form-full-width">
-                                <label>Destination Image <span class="required">*</span></label>
-                                <div class="file-upload-container" id="fileUploadContainer">
-                                    <label for="image" class="file-upload-label" id="fileUploadLabel">
-                                        <i class="fas fa-cloud-upload-alt"></i>
-                                        <div class="file-info">
-                                            <h4>Click to upload or drag and drop</h4>
-                                            <p>PNG, JPG, GIF, WebP (Max 5MB)</p>
-                                            <p>Recommended: 1200×800 pixels or larger</p>
-                                        </div>
-                                    </label>
-                                    <input type="file" id="image" name="image" class="file-input" accept="image/*" required>
-                                </div>
-                                <div class="file-preview" id="filePreview">
-                                    <img src="" alt="Preview" class="preview-image" id="previewImage">
-                                </div>
-                            </div>
-                            
-                            <!-- Form Tips -->
-                            <div class="form-tips">
-                                <h4><i class="fas fa-lightbulb"></i> Tips for Best Results</h4>
-                                <ul>
-                                    <li>Use high-quality, vibrant images that showcase the destination</li>
-                                    <li>Provide detailed descriptions to attract travelers</li>
-                                    <li>Include popular attractions and activities</li>
-                                    <li>Mention the best time to visit for optimal experience</li>
-                                    <li>Destinations will appear in search results immediately</li>
-                                </ul>
-                            </div>
-                            
-                            <!-- Form Actions -->
-                            <div class="form-actions">
-                                <button type="submit" name="add" class="submit-btn">
-                                    <i class="fas fa-plus-circle"></i> Add Destination
-                                </button>
-                                <a href="dashboard.php" class="cancel-btn">
-                                    <i class="fas fa-times"></i> Cancel
-                                </a>
-                            </div>
-                        </form>
+                        </div>
                         
-                        <!-- Stats Preview -->
-                        <div class="stats-preview">
-                            <div class="stat-preview">
-                                <i class="fas fa-globe"></i>
-                                <h4><?php echo $stats['total_destinations'] ?? 0; ?></h4>
-                                <p>Total Destinations</p>
+                        <!-- Description -->
+                        <div class="form-group">
+                            <label for="description">Destination Description <span class="required">*</span></label>
+                            <textarea id="description" name="description" class="form-control" 
+                                      placeholder="Describe the destination, its attractions, culture, and unique features..."
+                                      rows="5" required><?php echo htmlspecialchars($_POST['description'] ?? ''); ?></textarea>
+                        </div>
+                        
+                        <!-- Popular Attractions -->
+                        <div class="form-group">
+                            <label for="popular_attractions">Popular Attractions</label>
+                            <textarea id="popular_attractions" name="popular_attractions" class="form-control" 
+                                      placeholder="List popular attractions, separated by commas (e.g., Eiffel Tower, Louvre Museum, Champs-Élysées)"
+                                      rows="3"><?php echo htmlspecialchars($_POST['popular_attractions'] ?? ''); ?></textarea>
+                            <small style="color: #718096; display: block; margin-top: 0.5rem;">
+                                <i class="fas fa-info-circle"></i> Separate attractions with commas
+                            </small>
+                        </div>
+                        
+                        <!-- Image Upload -->
+                        <div class="form-group">
+                            <label>Destination Image <span class="required">*</span></label>
+                            <div class="file-upload-container" onclick="document.getElementById('image').click()">
+                                <div style="text-align: center;">
+                                    <i class="fas fa-cloud-upload-alt" style="font-size: 3rem; color: #a0aec0; margin-bottom: 1rem;"></i>
+                                    <div style="color: #4a5568;">
+                                        <h4 style="margin: 0 0 0.5rem;">Click to upload or drag and drop</h4>
+                                        <p style="margin: 0; color: #718096;">PNG, JPG, GIF, WebP (Max 5MB)</p>
+                                        <p style="margin: 0.5rem 0 0; color: #a0aec0; font-size: 0.875rem;">
+                                            Recommended: 1200×800 pixels or larger
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
-                            
-                            <div class="stat-preview">
-                                <i class="fas fa-flag"></i>
-                                <h4><?php echo $stats['countries_covered'] ?? 0; ?></h4>
-                                <p>Countries Covered</p>
-                            </div>
-                            
-                            <div class="stat-preview">
-                                <i class="fas fa-hotel"></i>
-                                <h4><?php echo $stats['total_hotels'] ?? 0; ?></h4>
-                                <p>Total Hotels</p>
-                            </div>
-                            
-                            <div class="stat-preview">
-                                <i class="fas fa-calendar-check"></i>
-                                <h4><?php echo $stats['today_bookings'] ?? 0; ?></h4>
-                                <p>Today's Bookings</p>
+                            <input type="file" id="image" name="image" class="file-input" accept="image/*" required>
+                            <div id="filePreview" style="margin-top: 1rem; display: none;">
+                                <img id="previewImage" alt="Preview" style="max-width: 300px; border-radius: 8px;">
                             </div>
                         </div>
-                    <?php endif; ?>
-                </div>
+                        
+                        <!-- Form Tips -->
+                        <div class="form-tips">
+                            <h4 style="margin: 0 0 1rem; display: flex; align-items: center; gap: 8px; color: #2d3748;">
+                                <i class="fas fa-lightbulb" style="color: #f59e0b;"></i> Tips for Best Results
+                            </h4>
+                            <ul style="margin: 0; padding-left: 1.5rem; color: #4a5568;">
+                                <li>Use high-quality, vibrant images that showcase the destination</li>
+                                <li>Provide detailed descriptions to attract travelers</li>
+                                <li>Include popular attractions and activities</li>
+                                <li>Mention the best time to visit for optimal experience</li>
+                                <li>Destinations will appear in search results immediately</li>
+                            </ul>
+                        </div>
+                        
+                        <!-- Form Actions -->
+                        <div class="form-actions">
+                            <button type="submit" name="add" class="submit-btn">
+                                <i class="fas fa-plus-circle"></i> Add Destination
+                            </button>
+                            <a href="dashboard.php" class="cancel-btn">
+                                <i class="fas fa-times"></i> Cancel
+                            </a>
+                        </div>
+                    </form>
+                    
+                    <!-- Stats Preview -->
+                    <div class="stats-preview">
+                        <div class="stat-preview">
+                            <i class="fas fa-globe" style="font-size: 2rem; color: #4f46e5; margin-bottom: 1rem;"></i>
+                            <h3 style="margin: 0; font-size: 2rem; color: #2d3748;"><?php echo $stats['total_destinations'] ?? 0; ?></h3>
+                            <p style="margin: 0.5rem 0 0; color: #718096;">Total Destinations</p>
+                        </div>
+                        
+                        <div class="stat-preview">
+                            <i class="fas fa-flag" style="font-size: 2rem; color: #10b981; margin-bottom: 1rem;"></i>
+                            <h3 style="margin: 0; font-size: 2rem; color: #2d3748;"><?php echo $stats['countries_covered'] ?? 0; ?></h3>
+                            <p style="margin: 0.5rem 0 0; color: #718096;">Countries Covered</p>
+                        </div>
+                        
+                        <div class="stat-preview">
+                            <i class="fas fa-hotel" style="font-size: 2rem; color: #f59e0b; margin-bottom: 1rem;"></i>
+                            <h3 style="margin: 0; font-size: 2rem; color: #2d3748;"><?php echo $stats['total_hotels'] ?? 0; ?></h3>
+                            <p style="margin: 0.5rem 0 0; color: #718096;">Total Hotels</p>
+                        </div>
+                        
+                        <div class="stat-preview">
+                            <i class="fas fa-calendar-check" style="font-size: 2rem; color: #ef4444; margin-bottom: 1rem;"></i>
+                            <h3 style="margin: 0; font-size: 2rem; color: #2d3748;"><?php echo $stats['today_bookings'] ?? 0; ?></h3>
+                            <p style="margin: 0.5rem 0 0; color: #718096;">Today's Bookings</p>
+                        </div>
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
     </div>
 
-    <script src="../assets/js/main.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             // Image preview
             const imageInput = document.getElementById('image');
             const previewImage = document.getElementById('previewImage');
             const filePreview = document.getElementById('filePreview');
-            const fileUploadLabel = document.getElementById('fileUploadLabel');
-            const fileUploadContainer = document.getElementById('fileUploadContainer');
             
             imageInput.addEventListener('change', function(e) {
                 if (this.files && this.files[0]) {
@@ -316,51 +512,14 @@ $stats = $stats_query->fetch_assoc();
                     
                     reader.onload = function(e) {
                         previewImage.src = e.target.result;
-                        filePreview.classList.add('show');
+                        filePreview.style.display = 'block';
                     }
                     
                     reader.readAsDataURL(this.files[0]);
                 } else {
                     previewImage.src = '';
-                    filePreview.classList.remove('show');
+                    filePreview.style.display = 'none';
                 }
-            });
-            
-            // Drag and drop functionality
-            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                fileUploadContainer.addEventListener(eventName, preventDefaults, false);
-            });
-            
-            function preventDefaults(e) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-            
-            ['dragenter', 'dragover'].forEach(eventName => {
-                fileUploadContainer.addEventListener(eventName, highlight, false);
-            });
-            
-            ['dragleave', 'drop'].forEach(eventName => {
-                fileUploadContainer.addEventListener(eventName, unhighlight, false);
-            });
-            
-            function highlight() {
-                fileUploadLabel.classList.add('drag-over');
-            }
-            
-            function unhighlight() {
-                fileUploadLabel.classList.remove('drag-over');
-            }
-            
-            fileUploadContainer.addEventListener('drop', function(e) {
-                const dt = e.dataTransfer;
-                const files = dt.files;
-                
-                imageInput.files = files;
-                
-                // Trigger change event
-                const event = new Event('change');
-                imageInput.dispatchEvent(event);
             });
             
             // Character counter for description
@@ -372,7 +531,7 @@ $stats = $stats_query->fetch_assoc();
             
             function updateCounter() {
                 const length = descriptionInput.value.length;
-                descriptionCounter.textContent = `${length} characters (minimum 100 recommended)`;
+                descriptionCounter.textContent = `${length} characters`;
                 
                 if (length < 100) {
                     descriptionCounter.style.color = '#EF476F';
@@ -384,7 +543,7 @@ $stats = $stats_query->fetch_assoc();
             }
             
             descriptionInput.addEventListener('input', updateCounter);
-            updateCounter(); // Initial count
+            updateCounter();
             
             // Form validation
             const form = document.getElementById('addDestinationForm');
@@ -396,7 +555,7 @@ $stats = $stats_query->fetch_assoc();
                     requiredFields.forEach(field => {
                         if (!field.value.trim()) {
                             isValid = false;
-                            field.style.borderColor = '#EF476F';
+                            field.style.borderColor = '#ef4444';
                         } else {
                             field.style.borderColor = '';
                         }
@@ -405,125 +564,15 @@ $stats = $stats_query->fetch_assoc();
                     // Validate description length
                     if (descriptionInput.value.length < 50) {
                         isValid = false;
-                        descriptionInput.style.borderColor = '#EF476F';
+                        descriptionInput.style.borderColor = '#ef4444';
                         alert('Description should be at least 50 characters long.');
-                    } else {
-                        descriptionInput.style.borderColor = '';
-                    }
-                    
-                    // Validate image
-                    if (!imageInput.files || imageInput.files.length === 0) {
-                        isValid = false;
-                        alert('Please select an image for the destination.');
-                    } else {
-                        const file = imageInput.files[0];
-                        const validTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/gif', 'image/webp'];
-                        const maxSize = 5 * 1024 * 1024; // 5MB
-                        
-                        if (!validTypes.includes(file.type)) {
-                            isValid = false;
-                            alert('Only JPG, PNG, GIF, and WebP images are allowed.');
-                        }
-                        
-                        if (file.size > maxSize) {
-                            isValid = false;
-                            alert('Image size must be less than 5MB.');
-                        }
                     }
                     
                     if (!isValid) {
                         e.preventDefault();
-                        alert('Please fill in all required fields correctly.');
-                    } else {
-                        // Show loading state
-                        const submitBtn = form.querySelector('button[type="submit"]');
-                        const originalText = submitBtn.innerHTML;
-                        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Adding Destination...';
-                        submitBtn.disabled = true;
-                        
-                        // Re-enable button if form submission fails
-                        setTimeout(() => {
-                            submitBtn.innerHTML = originalText;
-                            submitBtn.disabled = false;
-                        }, 5000);
                     }
                 });
             }
-            
-            // Auto-suggest countries
-            const countryInput = document.getElementById('country');
-            const countries = [
-                'United States', 'United Kingdom', 'France', 'Italy', 'Spain', 'Germany', 
-                'Japan', 'China', 'Australia', 'Canada', 'Brazil', 'Mexico', 'Thailand',
-                'Greece', 'Turkey', 'Portugal', 'Netherlands', 'Switzerland', 'Austria',
-                'United Arab Emirates', 'Singapore', 'Malaysia', 'India', 'South Korea',
-                'New Zealand', 'South Africa', 'Egypt', 'Morocco', 'Argentina', 'Chile'
-            ];
-            
-            let countrySuggestions = null;
-            
-            countryInput.addEventListener('input', function() {
-                const value = this.value.toLowerCase();
-                
-                // Remove existing suggestions
-                if (countrySuggestions) {
-                    countrySuggestions.remove();
-                }
-                
-                if (value.length > 1) {
-                    const filtered = countries.filter(country => 
-                        country.toLowerCase().includes(value)
-                    );
-                    
-                    if (filtered.length > 0) {
-                        countrySuggestions = document.createElement('div');
-                        countrySuggestions.className = 'suggestions';
-                        countrySuggestions.style.cssText = `
-                            position: absolute;
-                            background: white;
-                            border: 1px solid #e2e8f0;
-                            border-radius: 8px;
-                            max-height: 200px;
-                            overflow-y: auto;
-                            z-index: 1000;
-                            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-                            width: ${countryInput.offsetWidth}px;
-                        `;
-                        
-                        filtered.forEach(country => {
-                            const suggestion = document.createElement('div');
-                            suggestion.textContent = country;
-                            suggestion.style.cssText = `
-                                padding: 0.8rem 1rem;
-                                cursor: pointer;
-                                transition: background 0.2s;
-                            `;
-                            suggestion.addEventListener('mouseenter', function() {
-                                this.style.background = '#f8fafc';
-                            });
-                            suggestion.addEventListener('mouseleave', function() {
-                                this.style.background = 'white';
-                            });
-                            suggestion.addEventListener('click', function() {
-                                countryInput.value = country;
-                                countrySuggestions.remove();
-                                countrySuggestions = null;
-                            });
-                            countrySuggestions.appendChild(suggestion);
-                        });
-                        
-                        countryInput.parentNode.appendChild(countrySuggestions);
-                    }
-                }
-            });
-            
-            // Remove suggestions when clicking outside
-            document.addEventListener('click', function(e) {
-                if (countrySuggestions && !countryInput.contains(e.target) && !countrySuggestions.contains(e.target)) {
-                    countrySuggestions.remove();
-                    countrySuggestions = null;
-                }
-            });
         });
     </script>
 </body>

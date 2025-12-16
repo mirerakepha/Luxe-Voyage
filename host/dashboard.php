@@ -33,7 +33,7 @@ $recentBookings = $conn->query(
 $recentHotels = $conn->query(
     "SELECT * FROM hotels 
      WHERE host_id=$hostId 
-     ORDER BY id DESC  -- Using id instead of created_at
+     ORDER BY id DESC  
      LIMIT 3"
 );
 
