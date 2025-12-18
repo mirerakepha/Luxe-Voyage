@@ -2,7 +2,7 @@
 
 A premium hotel booking platform with three user roles: Admin, Host, and Customer.
 
-## 🚀 Quick Start Guide (XAMPP on Windows)
+##  Quick Start Guide (XAMPP on Windows)
 
 ### Prerequisites
 1. **XAMPP** installed on Windows
@@ -49,6 +49,8 @@ mkdir C:\xampp\htdocs\Luxe-Voyage\uploads\destinations
 mkdir C:\xampp\htdocs\Luxe-Voyage\uploads\hotels
 mkdir C:\xampp\htdocs\Luxe-Voyage\uploads\profiles
 ```
+### To run
+ on Your browser paste the following file path; http://localhost/Luxe-Voyage/index.php to view the front end
 ### 📄 License
  This project is for educational purposes.
 
